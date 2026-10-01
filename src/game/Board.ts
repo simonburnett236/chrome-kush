@@ -231,4 +231,23 @@ export class Board {
     for (const p of slots) this.cells[p.r][p.c].piece!.kind = this.randomKind();
     if (this.findMatches().length > 0 || !this.hasValidMove()) this.shuffle();
   }
+
+  /** Lighter booster: remove one piece (and its cage). Returns what was removed. */
+  destroyAt(pos: Pos): ClearedPiece[] {
+    const cell = this.cell(pos.r, pos.c);
+    if (!cell || !cell.active || !cell.piece) return [];
+    return this.clear([pos]);
+  }
+
+  /** Starter Blast: clear a full row and column through the board center area. */
+  blastCross(rng: () => number = this.rng): ClearedPiece[] {
+    const r = 2 + Math.floor(rng() * (this.size - 4));
+    const c = 2 + Math.floor(rng() * (this.size - 4));
+    const cells: Pos[] = [];
+    for (let i = 0; i < this.size; i++) {
+      cells.push({ r, c: i });
+      if (i !== r) cells.push({ r: i, c });
+    }
+    return this.clear(cells.filter((p) => this.cells[p.r][p.c].active));
+  }
 }

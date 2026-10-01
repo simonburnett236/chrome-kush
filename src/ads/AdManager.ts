@@ -1,4 +1,4 @@
-import type { InterstitialProvider } from "./AdProvider";
+import type { InterstitialProvider, RewardedProvider } from "./AdProvider";
 import type { Entitlements } from "../store/Entitlements";
 
 const KEY = "ck.ads.levelsSinceAd";
@@ -9,40 +9,42 @@ export interface AdSettings {
 }
 
 /**
- * Decides when forced ads run. Rules:
- * - only after the player taps Continue on a completed level
- * - every N completed levels
- * - never for No-Ads Pass or Premium players
+ * Decides when ads run.
+ * Forced: only after Continue on a completed level, every N levels, never for No-Ads/Premium.
+ * Rewarded: always optional, available to everyone (including ad-free players).
  */
 export class AdManager {
   private levelsSinceAd: number;
 
   constructor(
-    private provider: InterstitialProvider,
+    private interstitial: InterstitialProvider,
+    private rewarded: RewardedProvider,
     private entitlements: Entitlements,
     private settings: AdSettings,
   ) {
     this.levelsSinceAd = Number(localStorage.getItem(KEY) ?? 0) || 0;
   }
 
-  setProvider(provider: InterstitialProvider): void {
-    this.provider = provider;
+  setProviders(p: { interstitial?: InterstitialProvider; rewarded?: RewardedProvider }): void {
+    if (p.interstitial) this.interstitial = p.interstitial;
+    if (p.rewarded) this.rewarded = p.rewarded;
   }
 
-  /** Call when the player taps Continue after winning. Resolves after any ad. */
   async onLevelCompletedContinue(): Promise<void> {
     if (this.entitlements.adsRemoved) return;
     this.levelsSinceAd++;
-    if (this.levelsSinceAd >= this.settings.interstitialEveryNLevels && this.provider.isReady()) {
+    if (this.levelsSinceAd >= this.settings.interstitialEveryNLevels && this.interstitial.isReady()) {
       this.levelsSinceAd = 0;
-      this.persist();
-      await this.provider.showInterstitial(this.settings.interstitialSeconds);
+      localStorage.setItem(KEY, "0");
+      await this.interstitial.showInterstitial(this.settings.interstitialSeconds);
       return;
     }
-    this.persist();
+    localStorage.setItem(KEY, String(this.levelsSinceAd));
   }
 
-  private persist(): void {
-    localStorage.setItem(KEY, String(this.levelsSinceAd));
+  /** Returns true when the player watched the whole rewarded ad. */
+  async showRewarded(): Promise<boolean> {
+    if (!this.rewarded.isReady()) return false;
+    return this.rewarded.showRewarded();
   }
 }

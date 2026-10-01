@@ -50,6 +50,20 @@ export class Entitlements {
     this.save();
   }
 
+  setPremiumUntil(ms: number): void {
+    this.state.premiumExpiresAt = ms;
+    this.save();
+  }
+
+  replace(state: { noAds: boolean; premiumExpiresAt: number }): void {
+    this.state = { ...state, noAds: this.state.noAds || state.noAds };
+    this.save();
+  }
+
+  snapshot() {
+    return { ...this.state };
+  }
+
   onChange(fn: () => void): void {
     this.listeners.add(fn);
   }

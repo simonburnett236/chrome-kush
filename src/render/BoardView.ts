@@ -15,7 +15,9 @@ import {
   Vector3,
 } from "@babylonjs/core";
 import type { Board, ClearedPiece, Pos } from "../game/Board";
-import { PIECE_KINDS, PIECE_SPACING } from "../config";
+import { PIECE_SPACING } from "../config";
+import { buildPieceTemplates } from "./Pieces";
+import { Background } from "./Background";
 
 type Tween = (dtMs: number) => boolean;
 
@@ -46,8 +48,11 @@ export class BoardView {
   /** Set by the game: return false to ignore input (animating, game over). */
   canInteract: (p: Pos) => boolean = () => true;
 
-  constructor(canvas: HTMLCanvasElement) {
-    this.engine = new Engine(canvas, true, { preserveDrawingBuffer: false, stencil: true }, true);
+  /** When set, a tap on a cell calls this instead of selecting (Lighter booster). */
+  tapOverride: ((p: Pos) => void) | null = null;
+
+  constructor(engine: Engine) {
+    this.engine = engine;
     this.scene = new Scene(this.engine);
     this.scene.clearColor = new Color4(0.04, 0.12, 0.07, 1);
 
@@ -61,7 +66,8 @@ export class BoardView {
     point.intensity = 0.6;
 
     this.smokeTexture = this.makeSmokeTexture();
-    this.buildTemplates();
+    this.templates = buildPieceTemplates(this.scene);
+    new Background(this.scene);
 
     this.selectRing = MeshBuilder.CreateTorus("select", { diameter: 0.95, thickness: 0.06, tessellation: 32 }, this.scene);
     this.selectRing.rotation.x = Math.PI / 2;
@@ -79,8 +85,6 @@ export class BoardView {
     });
 
     this.setupInput();
-    this.engine.runRenderLoop(() => this.scene.render());
-    window.addEventListener("resize", () => this.resize());
   }
 
   // ---------- setup ----------
@@ -108,32 +112,16 @@ export class BoardView {
     return m;
   }
 
-  /** Placeholder 3D shapes for each piece kind. Phase 2 swaps in real models. */
-  private buildTemplates(): void {
-    const s = this.scene;
-    const make: Array<() => Mesh> = [
-      () => MeshBuilder.CreateIcoSphere("bud", { radius: 0.36, subdivisions: 1, flat: true }, s),
-      () => MeshBuilder.CreateTorus("pipe", { diameter: 0.55, thickness: 0.17, tessellation: 24 }, s),
-      () => MeshBuilder.CreateCylinder("bong", { height: 0.78, diameterTop: 0.22, diameterBottom: 0.5, tessellation: 20 }, s),
-      () => MeshBuilder.CreateBox("lighter", { width: 0.36, height: 0.68, depth: 0.22 }, s),
-      () => MeshBuilder.CreateBox("papers", { width: 0.68, height: 0.44, depth: 0.07 }, s),
-      () => MeshBuilder.CreateCylinder("jar", { height: 0.46, diameter: 0.52, tessellation: 24 }, s),
-    ];
-    PIECE_KINDS.forEach((kind, i) => {
-      const mesh = make[i]();
-      if (i === 1) mesh.rotation.x = Math.PI / 2.4;
-      mesh.material = this.material(`mat-${kind.name}`, kind.color, i === 1 ? 0.85 : 1);
-      mesh.isVisible = false;
-      mesh.isPickable = false;
-      this.templates.push(mesh);
-    });
-  }
-
   private setupInput(): void {
     this.scene.onPointerObservable.add((info) => {
       if (info.type === PointerEventTypes.POINTERDOWN) {
         const p = this.pickCell();
-        if (!p || !this.canInteract(p)) return;
+        if (!p) return;
+        if (this.tapOverride) {
+          this.tapOverride(p);
+          return;
+        }
+        if (!this.canInteract(p)) return;
         this.dragStart = p;
         if (this.selected && (Math.abs(this.selected.r - p.r) + Math.abs(this.selected.c - p.c) === 1)) {
           const a = this.selected;
@@ -239,6 +227,7 @@ export class BoardView {
   private spawnMesh(kind: number, pos: Vector3): Mesh {
     const t = this.templates[kind];
     const m = t.clone(`piece-${kind}`)!;
+    m.metadata = { kind };
     m.isVisible = true;
     m.isPickable = false;
     m.position = pos.clone();
@@ -306,7 +295,7 @@ export class BoardView {
           mesh = this.spawnMesh(p.kind, start);
           this.pieceMeshes.set(p.id, mesh);
           mesh.scaling.setAll(1);
-        } else if (mesh.name !== `piece-${p.kind}`) {
+        } else if (mesh.metadata?.kind !== p.kind) {
           // Kind changed (fallback shuffle) - replace mesh in place.
           const replacement = this.spawnMesh(p.kind, mesh.position);
           mesh.dispose();
