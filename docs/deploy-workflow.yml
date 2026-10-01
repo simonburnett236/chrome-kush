@@ -1,0 +1,52 @@
+name: Deploy to Cloudflare
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      AMAZON_SHARED_SECRET: ${{ secrets.AMAZON_SHARED_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+
+      - name: Check Cloudflare secrets
+        id: cf
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "Add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID repo secrets to deploy."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create or find KV namespace for cloud saves
+        if: steps.cf.outputs.ready == 'true'
+        run: |
+          API="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/storage/kv/namespaces"
+          AUTH="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+          ID=$(curl -s -H "$AUTH" "$API?per_page=100" | jq -r '.result[] | select(.title=="chrome-kush-saves") | .id')
+          if [ -z "$ID" ]; then
+            ID=$(curl -s -X POST -H "$AUTH" -H "Content-Type: application/json" -d '{"title":"chrome-kush-saves"}' "$API" | jq -r '.result.id')
+          fi
+          if [ -z "$ID" ] || [ "$ID" = "null" ]; then echo "Could not create KV namespace"; exit 1; fi
+          sed -i "s/REPLACE_WITH_KV_NAMESPACE_ID/$ID/" wrangler.toml
+
+      - name: Deploy Worker
+        if: steps.cf.outputs.ready == 'true'
+        run: npx -y wrangler@4 deploy
+
+      - name: Set Amazon shared secret
+        if: steps.cf.outputs.ready == 'true' && env.AMAZON_SHARED_SECRET != ''
+        run: echo "$AMAZON_SHARED_SECRET" | npx -y wrangler@4 secret put AMAZON_SHARED_SECRET
